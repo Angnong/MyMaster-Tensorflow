@@ -1,0 +1,42 @@
+{
+    "input":
+    {
+        "path": "/home/zhanga/master/database/CASIA/tf_records/20170313_CASIA-WebFace_rcnn_0.9/",
+        "classes": 10575,
+        "height": 100,
+        "width": 100,
+        "channels": 3
+    },
+    "output":
+    {
+        "path": "/home/zhanga/master/savemodel/20170324_CASIA-WebFace_scratchnet_rgb_100x100_rcnn",
+        "display_results": 10,
+        "save_iterations": 10000,
+        "keep_last_k_models_info": "null means that all models are kept, else last int(k) models are kept",
+        "keep_last_k_models": null
+    },
+    "model":
+    {
+        "possibilities:": [ "inception_resnet_v2",
+                            "inception_v4",
+                            "resnet_v1_50", "resnet_v1_101", "resnet_v1_152",
+                            "scratchNet",
+                            "vgg_16", "vgg_19" ],
+        "architecture": "resnet_v1_50",
+        "finetune": false,
+        "checkpoint": ""
+    },
+    "parameters":
+    {
+        "train": true,
+        "batch_size": 128,
+        "iterations": 50000,
+        "base_lr": 0.01,
+        "step_size": 10000,
+        "gamma": 0.95,
+        "momentum": 0.9,
+        "additional_variations": false,
+	"validation_iter": 10000,
+	"select_thres": 0.8
+    }
+}
