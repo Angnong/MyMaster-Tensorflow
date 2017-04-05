@@ -7,7 +7,6 @@ Created on Tue Feb  7 15:17:10 2017
 
 """
 
-from sklearn.metrics import accuracy_score
 from sklearn.metrics import pairwise
 import matplotlib.pyplot as plt
 import argparse
@@ -29,6 +28,10 @@ from cnn_architectures import resnet_v2
 from cnn_architectures import scratchnet
 from cnn_architectures import vgg
 import cnn
+
+##############################################
+# para #
+_select_percent = 0.5
 
 ###############################################
 # Function #
@@ -141,13 +144,13 @@ def get_DR(sess, args, config, image_placeholder, endpoints, img_paths):
     img_pre = img_preprocess(img_encode, config, bbox)
 
     for i in range(len(img_paths)):
-        img = load_image(sess, args, img_pre, img_encode, bbox, config, img_paths[i])
+        img = load_image(sess, args, img_pre, img_encode, bbox, config, img_paths[i][0])
         if img is None:
             #print('Invalid bounding box')
             continue
 
         cur_imgs[batch_iter, :, :, :] = img
-        cur_img_paths.append(img_paths[i])
+        cur_img_paths.append(img_paths[i][0])
 
         # feed forward batch of images in cnn and extract feature vector
         batch_iter += 1
@@ -163,7 +166,6 @@ def get_DR(sess, args, config, image_placeholder, endpoints, img_paths):
     for j in range(len(cur_img_paths)):
         deep_representations.append(x[j, :].reshape(1, -1))
 
-    deep_representations = np.asarray(deep_representations)
     return deep_representations
 
 
@@ -173,7 +175,6 @@ def img_preprocess(img_encode, config, bbox):
     img = tf.image.decode_jpeg(img_encode)
     img = tf.image.convert_image_dtype(img, dtype=tf.float32)
     # crop with bounding box
-
     x, y, height, width = bbox[0], bbox[1], bbox[2], bbox[3]
     img = tf.image.crop_to_bounding_box(img, x, y, height, width)
     img = tf.expand_dims(img, 0)
@@ -213,10 +214,10 @@ def load_image(sess, args, img_preprocess, img_encode, bbox, config, img_path):
 def get_var_pairs(list_path, bbox_path):
     """
     read from train list and seperate to pairs
-    example variation pair:varpair [1,var1,var2,var3,var4,var5,var6]
-                           class/person [varpair1,varpair2,varpair3....]
+    example variation pair:class/person [varpair1,varpair2,varpair3....]
                            all pairs [class1, class2, ....]
     and
+
     filter with bounding boxes. only select the ones with bounding box
     """
     class_wrap = []
@@ -226,25 +227,25 @@ def get_var_pairs(list_path, bbox_path):
     int(img_idx_pre)
     with open(list_path, 'r') as image_list:
         content = csv.reader(image_list, delimiter='\t')
-
+        cont_line = 0
         for line in content:
             img_path, img_idx = line[0].split(',')
-            int(img_idx)
+            img_idx = int(img_idx)
             img_name = os.path.basename(img_path)
             class_name = os.path.basename(os.path.dirname(img_path))
             # check if it has bounding box
             if not os.path.exists(os.path.join(bbox_path, class_name, img_name[0:len(img_name) - 4] + '.csv')):
-                #cont_line += 1
-                print('not find bounding box of', class_name + '/' + img_name)
+                cont_line += 1
+                print('not find bounding box of', class_name + '/' + img_name, 'count:', cont_line)
                 continue
 
             # wrap by class
             if img_idx == img_idx_pre:
-                class_wrap.append(img_path)
+                class_wrap.append([img_path, img_idx])
             else:
                 all_pairs.append(class_wrap)
                 class_wrap = []
-                class_wrap.append(img_path)
+                class_wrap.append([img_path, img_idx])
                 img_idx_pre = img_idx
             """
             # wrap to 'pairs'
@@ -271,11 +272,50 @@ def get_var_pairs(list_path, bbox_path):
                     img_idx_pre = img_idx
             """
 
-    print(np.asarray(all_pairs).shape)
+    print(len(all_pairs))
     return all_pairs
 
 
-def re_select_vars(pairs, avg_class_dr, select_thres):
+def get_var_similarity(avg_dr, var_pair_dr):
+    # compare the vairations with class center and return the similarity/distances
+    similarities = []
+    for i in var_pair_dr:
+        simi = pairwise.cosine_similarity(i.reshape(1, -1), avg_dr.reshape(1, -1))[0, 0]
+        similarities.append(simi)
+
+    return similarities
+
+
+def re_select_vars_all_rank(class_var_list, select_thres):
+    # rank all variation similarities and take the top select_thres percent in the whole ranking
+    all_simi = []
+    new_list = []
+    for i in range(len(class_var_list)):
+        all_simi.append(class_var_list[i][1])
+    sort_idx = np.argsort(all_simi)
+    select_num = int(select_thres * len(class_var_list))
+    sort_idx_slc = sort_idx[len(class_var_list) - select_num:len(class_var_list)]
+    for j in sort_idx_slc:
+        new_list.append([class_var_list[j][0], all_simi[j]])
+
+    print(len(new_list))
+
+    return new_list
+
+
+def re_select_vars(var_pair_dr, avg_class_dr, select_thres, class_var_pairs):
+    # compare the variation with the class center and cut the threshold percent in the ranking in the class
+    new_list = []
+    similarities = []
+    for i in var_pair_dr:
+        simi = pairwise.cosine_similarity(i.reshape(1, -1), avg_class_dr.reshape(1, -1))[0, 0]
+        similarities.append(simi)
+    sort_idx = np.argsort(similarities)
+    select_num = int(select_thres * len(similarities))
+    sort_idx_slc = sort_idx[len(similarities) - select_num:len(similarities)]
+    print(sort_idx_slc)
+    for j in sort_idx_slc:
+        new_list.append(class_var_pairs[j])
 
     return new_list
 
@@ -283,20 +323,20 @@ def re_select_vars(pairs, avg_class_dr, select_thres):
 def get_class_attribute(deep_representations):
     avg_class_dr = np.mean(deep_representations, axis=0)
     # Criterion for re-selection
-    # option 1: cosine similarity
-    # option 2: absolute distance
+    # option 1: min_similarity: cosine similarity
+    # option 2: max_distance: absolute distance
     min_similarity = 1
     max_distance = 0
     for dr in deep_representations:
-        simi = pairwise.cosine_similarity(dr, avg_class_dr)[0]
+        simi = pairwise.cosine_similarity(dr.reshape(1, -1), avg_class_dr.reshape(1, -1))[0, 0]
         if simi < min_similarity:
             min_similarity = simi
     for dr in deep_representations:
-        dis = np.sqrt(np.sum(dr - avg_class_dr))
+        dis = np.linalg.norm(dr - avg_class_dr)
         if dis > max_distance:
             max_distance = dis
     max_differ = [min_similarity, max_distance]
-    return avg_class_dr, max_differ
+    return avg_class_dr[0], max_differ
 
 
 def plot_class_avg_dr(avg_dr):
@@ -317,14 +357,25 @@ def main():
     with open(os.path.join(os.getcwd(), 'config.json')) as config_file:
         config = json.load(config_file)
 
-    # load pairs(original image and its pose variations) as a pair
-    pairs = get_var_pairs(args.list_path, args.bbox)
-    #pairs_var = get_var_pairs(args.var_list, args.bbox)
     # setup result path
     result_path = os.path.join(os.getcwd(), 'results_DR_compare')
     if not os.path.exists(result_path):
         os.makedirs(result_path)
+    '''
+    # check if already exits saved results
+    file_path = os.path.join(result_path, 'avg_dr_by_class.csv')
+    if os.path.exists(file_path):
+        class_ground_truth = []
+        with open(file_path, 'r') as avg_file:
+            reader = csv.reader(avg_file, delimiter=',')
+            for line in reader:
+                class_ground_truth.append(line)
+    '''
+    # load pairs(original image and its pose variations) as a pair
+    pairs = get_var_pairs(args.list_path, args.bbox)
+    pairs_var = get_var_pairs(args.var_list, args.bbox)
 
+    print(len(pairs), len(pairs_var))
     # input image pairs forward CNN #
     # init tf session
     with tf.Session() as sess:
@@ -335,55 +386,55 @@ def main():
         endpoints = init_cnn(sess, args, config, image_placeholder)
 
         # calculate step by step by class/person
-        for class_idx, class_pairs in enumerate(pairs):
-            print('calculate Deep Representations of original images by class: ', class_idx, 'image number in class',
+        # save dictionary [class name] [class_avg_dr] [similarity and eculiden distance]
+        class_dic = {}
+        class_var_list = []
+        for cont_idx, class_pairs in enumerate(pairs):
+            print('calculate Deep Representations of original images by class: ', cont_idx, 'image number in class',
                   len(class_pairs))
 
             deep_representations = get_DR(sess, args, config, image_placeholder, endpoints, class_pairs)
-
             avg_class_dr, max_differ = get_class_attribute(deep_representations)
             with open(os.path.join(result_path, 'avg_dr_by_class.csv'), 'a') as f:
                 writer = csv.writer(f, delimiter=',')
-                writer.writerow([class_idx, avg_class_dr, max_differ])
-        '''
+                writer.writerow([class_pairs[0][1], avg_class_dr, max_differ])
+            class_dic[class_pairs[0][1]] = [avg_class_dr, max_differ]
+
         # calculate synthesized faces Deep Representations and select the good variations
-        # get ground truth of dr by class, which is calculated before
-        class_ground_truth = []
-        with open(os.path.join(result_path, 'avg_dr_by_class.csv'), 'r') as f:
-            content = csv.reader(f, delimiter='/t')
-            for line in content:
-                class_ground_truth.append(line)
 
-        for class_idx, class_var_pairs in enumerate(pairs_var):
-            print('calculate Deep Representations of synthesized faces by class: ', class_idx)
+        for class_var_idx, class_var_pairs in enumerate(pairs_var):
+            # class_var_pairs = pairs_var[cont_idx]
+            print('number of variations in class: ', class_var_idx, 'is: ', len(class_var_pairs))
+            var_deep_representations = get_DR(sess, args, config, image_placeholder, endpoints, class_var_pairs)
+            # find corresponding class_avg_dr in dictionary
+            avg_class_dr = class_dic[class_var_pairs[0][1]][0]
+            similarities = get_var_similarity(avg_class_dr, var_deep_representations)
+            for item_idx, item_var in enumerate(class_var_pairs):
+                class_var_list.append([item_var, similarities[item_idx]])
 
-            deep_representations = get_DR(sess, args, config, image_placeholder, endpoints, class_var_pairs)
-            # re-select the variations by divations
-            select_thres = config['parameter']['select_thres']
+            # reselect_var_pairs = re_select_vars(var_deep_representations, avg_class_dr, 0.6, class_var_pairs)
+        reselect_var_pairs = re_select_vars_all_rank(class_var_list, _select_percent)
 
-            new_list = re_select_vars(deep_representations, avg_class_dr, select_thres)
-
-            with open(os.path.join(os.result_path, 'reselect_trainlist_synthesize.csv'), 'a') as renew_pair:
-                writer = csv.writer(renew_pair, delimiter=',')
-                for item in new_list:
-                    writer.writerow(item)
-        '''
-    """
-    # try visualize first 10 class avg dr as example
-    # TODO: further change it to random 10 classes
-    first10_avg_dr = []
-    with open((os.path.join(result_path,'avg_dr_by_class.csv'),'r') as visual_class:
-        dr_reader = csv.reader(visual_class,delimiter='/t')
-        cont_class = 0
-        for line in dr_reader:
-            if cont_class == 5:
-                break
-            else:
-                first5_avg_dr.append(line[1])
-                cont_class += 1
-    # plot as curves
-    plot_class_avg_dr(first5_avg_dr)
-    """
+        with open(os.path.join(result_path, 'reselect_trainlist_synthesize.csv'), 'a') as renew_pair:
+            writer = csv.writer(renew_pair, delimiter=',')
+            for item1 in reselect_var_pairs:
+                writer.writerow(item1)
+            '''
+            # try visualize first 10 class avg dr as example
+            # TODO: further change it to random 10 classes
+            first10_avg_dr = []
+            with open((os.path.join(result_path,'avg_dr_by_class.csv'),'r') as visual_class:
+                dr_reader = csv.reader(visual_class,delimiter='/t')
+                cont_class = 0
+                for line in dr_reader:
+                    if cont_class == 5:
+                        break
+                    else:
+                        first5_avg_dr.append(line[1])
+                        cont_class += 1
+            # plot as curves
+            plot_class_avg_dr(first5_avg_dr)
+            '''
 
 
 if __name__ == '__main__':

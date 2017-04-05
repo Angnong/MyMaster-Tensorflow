@@ -22,7 +22,7 @@
                             "resnet_v1_50", "resnet_v1_101", "resnet_v1_152",
                             "scratchNet",
                             "vgg_16", "vgg_19" ],
-        "architecture": "resnet_v1_50",
+        "architecture": "resnet_v1_101",
         "finetune": false,
         "checkpoint": ""
     },
