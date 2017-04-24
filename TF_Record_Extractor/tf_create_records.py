@@ -230,7 +230,7 @@ def convert_dir(in_path, out_path, bbox_path, shards=128, file_filter=None, mode
 def main():
     args = parse_args()
 
-    #bbox_path = '/home/zhanga/master/database/CASIA/faces'
+    #bbox_path = '/home/zhanga/master/database/CASIA/faces_all_0.95'
     level = logging.ERROR
     if args.verbose:
         level = logging.DEBUG
